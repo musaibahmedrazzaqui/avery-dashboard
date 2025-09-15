@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, JSX } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -81,7 +81,7 @@ interface Data {
   errors: { store: string; message: string }[];
 }
 
-interface PaginatedTableProps<T> {
+interface PaginatedTableProps<T extends { id?: string | number }> {
   data: T[];
   itemsPerPage?: number;
   renderRow: (item: T) => JSX.Element;
@@ -89,7 +89,7 @@ interface PaginatedTableProps<T> {
   emptyMessage: string;
 }
 
-function PaginatedTable<T>({
+function PaginatedTable<T extends { id?: string | number }>({
   data,
   itemsPerPage = 10,
   renderRow,
@@ -156,6 +156,28 @@ function PaginatedTable<T>({
   );
 }
 
+interface OrderDetailsResponse {
+  order: any;
+}
+
+interface ProductDetailsResponse {
+  product: any;
+}
+
+interface CustomerDetailsResponse {
+  customer: any;
+}
+
+interface ErrorResponse {
+  error: string;
+}
+
+type DetailsResponse =
+  | OrderDetailsResponse
+  | ProductDetailsResponse
+  | CustomerDetailsResponse
+  | ErrorResponse;
+
 export default function Dashboard() {
   const [data, setData] = useState<Data | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -188,34 +210,34 @@ export default function Dashboard() {
   if (loading || !data)
     return <div className="text-center py-8">Loading...</div>;
 
-  const filteredData = {
-    allOrders: data.allOrders.filter(
-      (o) => storeFilter === "All" || o.store === storeFilter
-    ),
-    allProducts: data.allProducts.filter(
-      (p) => storeFilter === "All" || p.store === storeFilter
-    ),
-    allCustomers: data.allCustomers.filter(
-      (c) => storeFilter === "All" || c.store === storeFilter
-    ),
-    revenueData: [],
-    fulfillmentStatus: data.fulfillmentStatus.filter(
-      (s) =>
-        storeFilter === "All" ||
-        data.allOrders.some(
-          (o) =>
-            o.store === storeFilter &&
-            (o.fulfillment_status || "pending") === s.name
-        )
-    ),
-    financialStatus: data.financialStatus.filter(
-      (s) =>
-        storeFilter === "All" ||
-        data.allOrders.some(
-          (o) => o.store === storeFilter && o.financial_status === s.name
-        )
-    ),
-  };
+ const filteredData: Omit<Data, "totalRevenue" | "activeOrders" | "inventoryHealth" | "totalCustomers" | "lowStockCount" | "errors" | "topProducts" | "topCustomers"> & { revenueData: { date: string; revenue: number }[] } = {
+  allOrders: data.allOrders.filter(
+    (o) => storeFilter === "All" || o.store === storeFilter
+  ),
+  allProducts: data.allProducts.filter(
+    (p) => storeFilter === "All" || p.store === storeFilter
+  ),
+  allCustomers: data.allCustomers.filter(
+    (c) => storeFilter === "All" || c.store === storeFilter
+  ),
+  revenueData: [],
+  fulfillmentStatus: data.fulfillmentStatus.filter(
+    (s) =>
+      storeFilter === "All" ||
+      data.allOrders.some(
+        (o) =>
+          o.store === storeFilter &&
+          (o.fulfillment_status || "pending") === s.name
+      )
+  ),
+  financialStatus: data.financialStatus.filter(
+    (s) =>
+      storeFilter === "All" ||
+      data.allOrders.some(
+        (o) => o.store === storeFilter && o.financial_status === s.name
+      )
+  ),
+};
 
   for (let i = 6; i >= 0; i--) {
     const date = new Date();
@@ -223,56 +245,59 @@ export default function Dashboard() {
     const dateStr = date.toISOString().split("T")[0];
     const dailyRevenue = filteredData.allOrders
       .filter((o) => o.created_at.startsWith(dateStr))
-      .reduce((sum, o) => sum + parseFloat(o.total_price), 0);
+      .reduce(
+        (sum: number, o: any) => sum + parseFloat(o.total_price || "0"),
+        0
+      );
     filteredData.revenueData.push({ date: dateStr, revenue: dailyRevenue });
   }
 
   const filteredOrders = filteredData.allOrders
-  .filter((o) => {
-    // Log the order object to inspect its properties
-    console.log("Order:", o);
-    if (searchTerm === "" || !searchTerm) return true;
+    .filter((o: any) => {
+      // Log the order object to inspect its properties
+      console.log("Order:", o);
+      if (searchTerm === "" || !searchTerm) return true;
 
-    const orderNumber = (o.order_number ?? "").toString();
-    const totalPrice = (o.total_price ?? "").toString();
-    const search = searchTerm.toString().toLowerCase();
+      const orderNumber = (o.order_number ?? "").toString();
+      const totalPrice = (o.total_price ?? "").toString();
+      const search = searchTerm.toString().toLowerCase();
 
-    return (
-      orderNumber.toLowerCase().includes(search) ||
-      totalPrice.includes(search)
-    );
-  })
-  .filter((o) => {
-    if (statusFilter === "all") return true;
-    const fulfillmentStatus = (o.fulfillment_status ?? "").toString();
-    return fulfillmentStatus.toLowerCase() === statusFilter.toLowerCase();
-  })
-  .sort((a, b) => {
-    const aVal = sortBy.includes("date")
-      ? new Date(a.created_at).getTime()
-      : parseFloat(a.total_price || "0");
-    const bVal = sortBy.includes("date")
-      ? new Date(b.created_at).getTime()
-      : parseFloat(b.total_price || "0");
-    return sortBy.endsWith("desc") ? bVal - aVal : aVal - bVal;
-  });
+      return (
+        orderNumber.toLowerCase().includes(search) ||
+        totalPrice.includes(search)
+      );
+    })
+    .filter((o: any) => {
+      if (statusFilter === "all") return true;
+      const fulfillmentStatus = (o.fulfillment_status ?? "").toString();
+      return fulfillmentStatus.toLowerCase() === statusFilter.toLowerCase();
+    })
+    .sort((a: any, b: any) => {
+      const aVal = sortBy.includes("date")
+        ? new Date(a.created_at).getTime()
+        : parseFloat(a.total_price || "0");
+      const bVal = sortBy.includes("date")
+        ? new Date(b.created_at).getTime()
+        : parseFloat(b.total_price || "0");
+      return sortBy.endsWith("desc") ? bVal - aVal : aVal - bVal;
+    });
 
   const filteredProducts = filteredData.allProducts
     .filter(
-      (p) =>
+      (p: any) =>
         searchTerm === "" ||
         (p?.title ?? "").toLowerCase().includes(searchTerm.toLowerCase())
     )
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       const aVal = sortBy.includes("inventory")
         ? a.variants.reduce(
-            (sum: number, v: any) => sum + v.inventory_quantity,
+            (sum: number, v: any) => sum + (v.inventory_quantity || 0),
             0
           )
         : (a?.title ?? "").toLowerCase();
       const bVal = sortBy.includes("inventory")
         ? b.variants.reduce(
-            (sum: number, v: any) => sum + v.inventory_quantity,
+            (sum: number, v: any) => sum + (v.inventory_quantity || 0),
             0
           )
         : (b?.title ?? "").toLowerCase();
@@ -287,40 +312,43 @@ export default function Dashboard() {
 
   const filteredCustomers = filteredData.allCustomers
     .filter(
-      (c) =>
+      (c: any) =>
         searchTerm === "" ||
         (c?.email ?? "").toLowerCase().includes(searchTerm.toLowerCase())
     )
-    .sort((a, b) => {
+    .sort((a: any, b: any) => {
       const aVal = sortBy.includes("spent")
-        ? parseFloat(a.total_spent)
-        : a.orders_count;
+        ? parseFloat(a.total_spent || "0")
+        : a.orders_count || 0;
       const bVal = sortBy.includes("spent")
-        ? parseFloat(b.total_spent)
-        : b.orders_count;
+        ? parseFloat(b.total_spent || "0")
+        : b.orders_count || 0;
       return sortBy.endsWith("desc") ? bVal - aVal : aVal - bVal;
     });
 
   const overviewMetrics = {
     totalRevenue: filteredData.allOrders
-      .reduce((sum, o) => sum + parseFloat(o.total_price), 0)
+      .reduce(
+        (sum: number, o: any) => sum + parseFloat(o.total_price || "0"),
+        0
+      )
       .toFixed(2),
     activeOrders: filteredData.allOrders.filter(
-      (o) => o.fulfillment_status !== "fulfilled"
+      (o: any) => o.fulfillment_status !== "fulfilled"
     ).length,
     inventoryHealth:
       filteredData.allProducts.length > 0
         ? Math.round(
-            (filteredData.allProducts.filter((p) =>
-              p.variants.some((v) => v.inventory_quantity > 0)
+            (filteredData.allProducts.filter((p: any) =>
+              p.variants.some((v: any) => (v.inventory_quantity || 0) > 0)
             ).length /
               filteredData.allProducts.length) *
               100
           )
         : 0,
     totalCustomers: filteredData.allCustomers.length,
-    lowStockCount: filteredData.allProducts.filter((p) =>
-      p.variants.some((v) => v.inventory_quantity < 10)
+    lowStockCount: filteredData.allProducts.filter((p: any) =>
+      p.variants.some((v: any) => (v.inventory_quantity || 0) < 10)
     ).length,
   };
 
@@ -329,22 +357,39 @@ export default function Dashboard() {
     item: any,
     store: string
   ) => {
-    let result;
+    let result: DetailsResponse | undefined;
     try {
       if (type === "order")
-        result = await getOrderDetails( (store ?? "").toLowerCase() + ".com", item.id);
-      if (type === "product")
-        result = await getProductDetails( (store ?? "").toLowerCase() + ".com", item.id);
-      if (type === "customer")
+        result = await getOrderDetails(
+          (store ?? "").toLowerCase() + ".com",
+          item.id
+        );
+      else if (type === "product")
+        result = await getProductDetails(
+          (store ?? "").toLowerCase() + ".com",
+          item.id
+        );
+      else if (type === "customer")
         result = await getCustomerDetails(
           (store ?? "").toLowerCase() + ".com",
           item.id
         );
+      if (!result) {
+        throw new Error("No result returned");
+      }
       if ("error" in result) {
         toast.error(`Failed to load ${type} details: ${result.error}`);
         setSelectedItem({ type, details: null, error: result.error });
       } else {
-        setSelectedItem({ type, details: result[type] });
+        let details: any;
+        if (type === "order") {
+          details = (result as OrderDetailsResponse).order;
+        } else if (type === "product") {
+          details = (result as ProductDetailsResponse).product;
+        } else {
+          details = (result as CustomerDetailsResponse).customer;
+        }
+        setSelectedItem({ type, details });
       }
     } catch (error) {
       const message = `Failed to load ${type} details`;
@@ -481,9 +526,10 @@ export default function Dashboard() {
                   <Pie
                     data={filteredData.fulfillmentStatus}
                     labelLine={false}
-                    label={({ name, percent }) =>
-                      `${name} ${(percent * 100).toFixed(0)}%`
-                    }
+                    label={(props: any) => {
+                      const { name, percent } = props;
+                      return `${name} ${(percent * 100).toFixed(0)}%`;
+                    }}
                   >
                     {filteredData.fulfillmentStatus.map((entry, index) => (
                       <Cell
@@ -526,14 +572,14 @@ export default function Dashboard() {
           </div>
           <PaginatedTable
             data={filteredOrders}
-            renderRow={(item) => (
+            renderRow={(item: any) => (
               <TableRow>
                 <TableCell className="font-medium">
                   {item.order_number}
                 </TableCell>
                 <TableCell>{item.store}</TableCell>
                 <TableCell>
-                  ${parseFloat(item.total_price).toFixed(2)}
+                  ${parseFloat(item.total_price || "0").toFixed(2)}
                 </TableCell>
                 <TableCell>
                   <Badge variant="secondary">
@@ -609,7 +655,7 @@ export default function Dashboard() {
                             <AccordionItem value="line_items">
                               <AccordionTrigger>
                                 Line Items (
-                                {selectedItem.details.line_items.length})
+                                {selectedItem.details.line_items?.length || 0})
                               </AccordionTrigger>
                               <AccordionContent>
                                 <Table>
@@ -622,22 +668,29 @@ export default function Dashboard() {
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {selectedItem.details.line_items.map(
-                                      (item: any) => (
-                                        <TableRow key={item.id}>
-                                          <TableCell>{item.title}</TableCell>
-                                          <TableCell>{item.quantity}</TableCell>
-                                          <TableCell>${item.price}</TableCell>
+                                    {selectedItem.details.line_items?.map(
+                                      (lineItem: any) => (
+                                        <TableRow key={lineItem.id}>
+                                          <TableCell>
+                                            {lineItem.title}
+                                          </TableCell>
+                                          <TableCell>
+                                            {lineItem.quantity}
+                                          </TableCell>
+                                          <TableCell>
+                                            ${lineItem.price}
+                                          </TableCell>
                                           <TableCell>
                                             $
                                             {(
-                                              parseFloat(item.price) *
-                                              item.quantity
+                                              parseFloat(
+                                                lineItem.price || "0"
+                                              ) * (lineItem.quantity || 0)
                                             ).toFixed(2)}
                                           </TableCell>
                                         </TableRow>
                                       )
-                                    )}
+                                    ) || []}
                                   </TableBody>
                                 </Table>
                               </AccordionContent>
@@ -702,7 +755,7 @@ export default function Dashboard() {
           </div>
           <PaginatedTable
             data={filteredProducts}
-            renderRow={(item) => (
+            renderRow={(item: any) => (
               <TableRow>
                 <TableCell className="font-medium max-w-xs truncate">
                   {item.title}
@@ -711,7 +764,8 @@ export default function Dashboard() {
                 <TableCell
                   className={
                     item.variants.reduce(
-                      (sum: number, v: any) => sum + v.inventory_quantity,
+                      (sum: number, v: any) =>
+                        sum + (v.inventory_quantity || 0),
                       0
                     ) < 10
                       ? "text-red-600"
@@ -719,7 +773,7 @@ export default function Dashboard() {
                   }
                 >
                   {item.variants.reduce(
-                    (sum: number, v: any) => sum + v.inventory_quantity,
+                    (sum: number, v: any) => sum + (v.inventory_quantity || 0),
                     0
                   )}
                 </TableCell>
@@ -760,10 +814,10 @@ export default function Dashboard() {
                             <div>
                               <Label>Description</Label>
                               <p className="line-clamp-4">
-                                {selectedItem.details.body_html.replace(
+                                {selectedItem.details.body_html?.replace(
                                   /<[^>]*>/g,
                                   ""
-                                )}
+                                ) || ""}
                               </p>
                             </div>
                             <div>
@@ -779,8 +833,8 @@ export default function Dashboard() {
                           <Accordion type="single" collapsible>
                             <AccordionItem value="variants">
                               <AccordionTrigger>
-                                Variants ({selectedItem.details.variants.length}
-                                )
+                                Variants (
+                                {selectedItem.details.variants?.length || 0})
                               </AccordionTrigger>
                               <AccordionContent>
                                 <Table>
@@ -792,14 +846,14 @@ export default function Dashboard() {
                                     </TableRow>
                                   </TableHeader>
                                   <TableBody>
-                                    {selectedItem.details.variants.map(
+                                    {selectedItem.details.variants?.map(
                                       (v: any) => (
                                         <TableRow key={v.id}>
                                           <TableCell>{v.sku}</TableCell>
                                           <TableCell>${v.price}</TableCell>
                                           <TableCell
                                             className={
-                                              v.inventory_quantity < 10
+                                              (v.inventory_quantity || 0) < 10
                                                 ? "text-red-600"
                                                 : ""
                                             }
@@ -808,7 +862,7 @@ export default function Dashboard() {
                                           </TableCell>
                                         </TableRow>
                                       )
-                                    )}
+                                    ) || []}
                                   </TableBody>
                                 </Table>
                               </AccordionContent>
@@ -873,7 +927,7 @@ export default function Dashboard() {
           </div>
           <PaginatedTable
             data={filteredCustomers}
-            renderRow={(item) => (
+            renderRow={(item: any) => (
               <TableRow>
                 <TableCell className="font-medium">
                   {item.first_name} {item.last_name}
@@ -884,7 +938,7 @@ export default function Dashboard() {
                 <TableCell>{item.store}</TableCell>
                 <TableCell>{item.orders_count}</TableCell>
                 <TableCell>
-                  ${parseFloat(item.total_spent).toFixed(2)}
+                  ${parseFloat(item.total_spent || "0").toFixed(2)}
                 </TableCell>
                 <TableCell>
                   <Dialog>
@@ -938,11 +992,11 @@ export default function Dashboard() {
                             <AccordionItem value="addresses">
                               <AccordionTrigger>
                                 Addresses (
-                                {selectedItem.details.addresses.length})
+                                {selectedItem.details.addresses?.length || 0})
                               </AccordionTrigger>
                               <AccordionContent>
                                 <div className="space-y-2">
-                                  {selectedItem.details.addresses.map(
+                                  {selectedItem.details.addresses?.map(
                                     (addr: any, i: number) => (
                                       <div
                                         key={i}
@@ -954,7 +1008,7 @@ export default function Dashboard() {
                                         </p>
                                       </div>
                                     )
-                                  )}
+                                  ) || []}
                                 </div>
                               </AccordionContent>
                             </AccordionItem>
@@ -1027,7 +1081,8 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart
                     data={data.topProducts.filter(
-                      (p) => storeFilter === "All" || p.store === storeFilter
+                      (p: any) =>
+                        storeFilter === "All" || p.store === storeFilter
                     )}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
@@ -1056,17 +1111,18 @@ export default function Dashboard() {
                   <TableBody>
                     {data.topProducts
                       .filter(
-                        (p) => storeFilter === "All" || p.store === storeFilter
+                        (p: any) =>
+                          storeFilter === "All" || p.store === storeFilter
                       )
                       .slice(0, 5)
-                      .map((p, i) => (
+                      .map((p: any, i: number) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">
                             {p.name}
                           </TableCell>
                           <TableCell>{p.store}</TableCell>
                           <TableCell>{p.units}</TableCell>
-                          <TableCell>${p.revenue.toFixed(2)}</TableCell>
+                          <TableCell>${(p.revenue || 0).toFixed(2)}</TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
@@ -1081,7 +1137,8 @@ export default function Dashboard() {
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart
                     data={data.topCustomers.filter(
-                      (c) => storeFilter === "All" || c.store === storeFilter
+                      (c: any) =>
+                        storeFilter === "All" || c.store === storeFilter
                     )}
                   >
                     <CartesianGrid strokeDasharray="3 3" />
@@ -1108,17 +1165,18 @@ export default function Dashboard() {
                   <TableBody>
                     {data.topCustomers
                       .filter(
-                        (c) => storeFilter === "All" || c.store === storeFilter
+                        (c: any) =>
+                          storeFilter === "All" || c.store === storeFilter
                       )
                       .slice(0, 5)
-                      .map((c, i) => (
+                      .map((c: any, i: number) => (
                         <TableRow key={i}>
                           <TableCell className="font-medium">
                             {c.name}
                           </TableCell>
                           <TableCell className="truncate">{c.email}</TableCell>
                           <TableCell>{c.store}</TableCell>
-                          <TableCell>${c.total.toFixed(2)}</TableCell>
+                          <TableCell>${(c.total || 0).toFixed(2)}</TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
