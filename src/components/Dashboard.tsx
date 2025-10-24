@@ -210,6 +210,9 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState("date_desc");
   const [searchType, setSearchType] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [profitDateRange, setProfitDateRange] = useState("30");
+  const [profitStartDate, setProfitStartDate] = useState("");
+  const [profitEndDate, setProfitEndDate] = useState("");
   const [selectedItem, setSelectedItem] = useState<{
     type: "order" | "product" | "customer";
     details: any;
@@ -579,13 +582,14 @@ export default function Dashboard() {
         onValueChange={setActiveTab}
         className="space-y-6"
       >
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="orders">Orders</TabsTrigger>
           <TabsTrigger value="products">Products</TabsTrigger>
           <TabsTrigger value="customers">Customers</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="financials">Financials</TabsTrigger>
+          <TabsTrigger value="profit">Profit Analysis</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
@@ -1578,6 +1582,518 @@ export default function Dashboard() {
                     </Table>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="profit">
+          <div className="space-y-6">
+            {/* Date Range Selector */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Profit Analysis - Custom Date Range</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                  <div>
+                    <Label htmlFor="profit-range">Quick Range</Label>
+                    <Select value={profitDateRange} onValueChange={setProfitDateRange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select range" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="7">Last 7 days</SelectItem>
+                        <SelectItem value="30">Last 30 days</SelectItem>
+                        <SelectItem value="90">Last 90 days</SelectItem>
+                        <SelectItem value="180">Last 6 months</SelectItem>
+                        <SelectItem value="365">Last year</SelectItem>
+                        <SelectItem value="custom">Custom Range</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  {profitDateRange === "custom" && (
+                    <>
+                      <div>
+                        <Label htmlFor="start-date">Start Date</Label>
+                        <Input
+                          id="start-date"
+                          type="date"
+                          value={profitStartDate}
+                          onChange={(e) => setProfitStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="end-date">End Date</Label>
+                        <Input
+                          id="end-date"
+                          type="date"
+                          value={profitEndDate}
+                          onChange={(e) => setProfitEndDate(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+                  
+                  
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Profit Overview Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {(() => {
+                const getDateRange = () => {
+                  if (profitDateRange === "custom" && profitStartDate && profitEndDate) {
+                    return { start: new Date(profitStartDate), end: new Date(profitEndDate) };
+                  }
+                  const days = parseInt(profitDateRange);
+                  const end = new Date();
+                  const start = new Date();
+                  start.setDate(start.getDate() - days);
+                  return { start, end };
+                };
+
+                const { start, end } = getDateRange();
+                const filteredOrders = filteredData.allOrders.filter((order: any) => {
+                  const orderDate = new Date(order.created_at);
+                  return orderDate >= start && orderDate <= end;
+                });
+
+                const totalRevenue = filteredOrders.reduce((sum: number, order: any) => 
+                  sum + parseFloat(order.total_price || '0'), 0);
+
+                // More sophisticated COGS calculation based on product categories
+                const cogsByCategory = {
+                  'Electronics': 0.65, // 65% COGS
+                  'Accessories': 0.55, // 55% COGS
+                  'Camera': 0.70, // 70% COGS
+                  'Lens': 0.75, // 75% COGS
+                  'Tripod': 0.60, // 60% COGS
+                  'Lighting': 0.65, // 65% COGS
+                  'Audio': 0.60, // 60% COGS
+                  'Storage': 0.50, // 50% COGS
+                  'Uncategorized': 0.60 // Default 60% COGS
+                };
+
+                let totalCOGS = 0;
+                filteredOrders.forEach((order: any) => {
+                  order.line_items.forEach((item: any) => {
+                    const product = filteredData.allProducts.find(p => 
+                      p.variants.some((v: any) => v.sku === item.sku || p.title === item.title)
+                    );
+                    const category = product?.product_type || 'Uncategorized';
+                    const cogsRate = cogsByCategory[category as keyof typeof cogsByCategory] || 0.60;
+                    totalCOGS += parseFloat(item.price || '0') * (item.quantity || 0) * cogsRate;
+                  });
+                });
+
+                const grossProfit = totalRevenue - totalCOGS;
+                const grossMarginPercent = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+                // Estimate operating expenses (typically 15-25% of revenue)
+                const operatingExpenses = totalRevenue * 0.20; // 20% estimate
+                const netProfit = grossProfit - operatingExpenses;
+                const netMarginPercent = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
+
+                return (
+                  <>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-gray-600">Total Revenue</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <p className="text-2xl font-bold text-green-600">${totalRevenue.toFixed(2)}</p>
+                        <p className="text-xs text-gray-500">{filteredOrders.length} orders</p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-gray-600">Gross Profit</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <p className="text-2xl font-bold text-blue-600">${grossProfit.toFixed(2)}</p>
+                        <p className="text-xs text-gray-500">{grossMarginPercent.toFixed(1)}% margin</p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-gray-600">Net Profit</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <p className="text-2xl font-bold text-purple-600">${netProfit.toFixed(2)}</p>
+                        <p className="text-xs text-gray-500">{netMarginPercent.toFixed(1)}% margin</p>
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-gray-600">Avg Order Value</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <p className="text-2xl font-bold text-orange-600">
+                          ${filteredOrders.length > 0 ? (totalRevenue / filteredOrders.length).toFixed(2) : '0.00'}
+                        </p>
+                        <p className="text-xs text-gray-500">per order</p>
+                      </CardContent>
+                    </Card>
+                  </>
+                );
+              })()}
+            </div>
+
+            {/* Detailed Profit Breakdown */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Detailed Profit Breakdown</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div>
+                    <h4 className="text-lg font-semibold mb-4">Profit by Platform</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Platform</TableHead>
+                          <TableHead>Revenue</TableHead>
+                          <TableHead>COGS</TableHead>
+                          <TableHead>Gross Profit</TableHead>
+                          <TableHead>Margin %</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(() => {
+                          const getDateRange = () => {
+                            if (profitDateRange === "custom" && profitStartDate && profitEndDate) {
+                              return { start: new Date(profitStartDate), end: new Date(profitEndDate) };
+                            }
+                            const days = parseInt(profitDateRange);
+                            const end = new Date();
+                            const start = new Date();
+                            start.setDate(start.getDate() - days);
+                            return { start, end };
+                          };
+
+                          const { start, end } = getDateRange();
+                          const platformStats = filteredData.allOrders
+                            .filter((order: any) => {
+                              const orderDate = new Date(order.created_at);
+                              return orderDate >= start && orderDate <= end;
+                            })
+                            .reduce((acc: any, order: any) => {
+                              if (!acc[order.store]) {
+                                acc[order.store] = { revenue: 0, cogs: 0, orders: 0 };
+                              }
+                              acc[order.store].revenue += parseFloat(order.total_price || '0');
+                              acc[order.store].orders += 1;
+                              
+                              // Calculate COGS for this order
+                              order.line_items.forEach((item: any) => {
+                                const product = filteredData.allProducts.find(p => 
+                                  p.variants.some((v: any) => v.sku === item.sku || p.title === item.title)
+                                );
+                                const category = product?.product_type || 'Uncategorized';
+                                const cogsRates: Record<string, number> = {
+                                  'Electronics': 0.65, 'Accessories': 0.55, 'Camera': 0.70,
+                                  'Lens': 0.75, 'Tripod': 0.60, 'Lighting': 0.65,
+                                  'Audio': 0.60, 'Storage': 0.50, 'Uncategorized': 0.60
+                                };
+                                const cogsRate = cogsRates[category] || 0.60;
+                                acc[order.store].cogs += parseFloat(item.price || '0') * (item.quantity || 0) * cogsRate;
+                              });
+                              return acc;
+                            }, {});
+
+                          return Object.entries(platformStats).map(([platform, stats]: [string, any]) => {
+                            const grossProfit = stats.revenue - stats.cogs;
+                            const marginPercent = stats.revenue > 0 ? (grossProfit / stats.revenue) * 100 : 0;
+                            return (
+                              <TableRow key={platform}>
+                                <TableCell className="font-medium">{platform}</TableCell>
+                                <TableCell>${stats.revenue.toFixed(2)}</TableCell>
+                                <TableCell>${stats.cogs.toFixed(2)}</TableCell>
+                                <TableCell className={grossProfit >= 0 ? "text-green-600" : "text-red-600"}>
+                                  ${grossProfit.toFixed(2)}
+                                </TableCell>
+                                <TableCell className={marginPercent >= 0 ? "text-green-600" : "text-red-600"}>
+                                  {marginPercent.toFixed(1)}%
+                                </TableCell>
+                              </TableRow>
+                            );
+                          });
+                        })()}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  <div>
+                    <h4 className="text-lg font-semibold mb-4">Profit by Product Category</h4>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Revenue</TableHead>
+                          <TableHead>COGS</TableHead>
+                          <TableHead>Gross Profit</TableHead>
+                          <TableHead>Margin %</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(() => {
+                          const getDateRange = () => {
+                            if (profitDateRange === "custom" && profitStartDate && profitEndDate) {
+                              return { start: new Date(profitStartDate), end: new Date(profitEndDate) };
+                            }
+                            const days = parseInt(profitDateRange);
+                            const end = new Date();
+                            const start = new Date();
+                            start.setDate(start.getDate() - days);
+                            return { start, end };
+                          };
+
+                          const { start, end } = getDateRange();
+                          const categoryStats = filteredData.allOrders
+                            .filter((order: any) => {
+                              const orderDate = new Date(order.created_at);
+                              return orderDate >= start && orderDate <= end;
+                            })
+                            .reduce((acc: any, order: any) => {
+                              order.line_items.forEach((item: any) => {
+                                const product = filteredData.allProducts.find(p => 
+                                  p.variants.some((v: any) => v.sku === item.sku || p.title === item.title)
+                                );
+                                const category = product?.product_type || 'Uncategorized';
+                                
+                                if (!acc[category]) {
+                                  acc[category] = { revenue: 0, cogs: 0, units: 0 };
+                                }
+                                
+                                const itemRevenue = parseFloat(item.price || '0') * (item.quantity || 0);
+                                const cogsRates: Record<string, number> = {
+                                  'Electronics': 0.65, 'Accessories': 0.55, 'Camera': 0.70,
+                                  'Lens': 0.75, 'Tripod': 0.60, 'Lighting': 0.65,
+                                  'Audio': 0.60, 'Storage': 0.50, 'Uncategorized': 0.60
+                                };
+                                const cogsRate = cogsRates[category] || 0.60;
+                                
+                                acc[category].revenue += itemRevenue;
+                                acc[category].cogs += itemRevenue * cogsRate;
+                                acc[category].units += item.quantity || 0;
+                              });
+                              return acc;
+                            }, {});
+
+                          return Object.entries(categoryStats)
+                            .map(([category, stats]: [string, any]) => {
+                              const grossProfit = stats.revenue - stats.cogs;
+                              const marginPercent = stats.revenue > 0 ? (grossProfit / stats.revenue) * 100 : 0;
+                              return { category, ...stats, grossProfit, marginPercent };
+                            })
+                            .sort((a, b) => b.grossProfit - a.grossProfit)
+                            .slice(0, 10)
+                            .map((stat, index) => (
+                              <TableRow key={index}>
+                                <TableCell className="font-medium">{stat.category}</TableCell>
+                                <TableCell>${stat.revenue.toFixed(2)}</TableCell>
+                                <TableCell>${stat.cogs.toFixed(2)}</TableCell>
+                                <TableCell className={stat.grossProfit >= 0 ? "text-green-600" : "text-red-600"}>
+                                  ${stat.grossProfit.toFixed(2)}
+                                </TableCell>
+                                <TableCell className={stat.marginPercent >= 0 ? "text-green-600" : "text-red-600"}>
+                                  {stat.marginPercent.toFixed(1)}%
+                                </TableCell>
+                              </TableRow>
+                            ));
+                        })()}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Profit Trends Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Profit Trends</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={400}>
+                  <LineChart data={(() => {
+                    const getDateRange = () => {
+                      if (profitDateRange === "custom" && profitStartDate && profitEndDate) {
+                        return { start: new Date(profitStartDate), end: new Date(profitEndDate) };
+                      }
+                      const days = parseInt(profitDateRange);
+                      const end = new Date();
+                      const start = new Date();
+                      start.setDate(start.getDate() - days);
+                      return { start, end };
+                    };
+
+                    const { start, end } = getDateRange();
+                    const daysDiff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+                    const dataPoints = Math.min(daysDiff, 30); // Limit to 30 data points for readability
+                    
+                    const trendData = [];
+                    for (let i = 0; i < dataPoints; i++) {
+                      const date = new Date(start);
+                      date.setDate(date.getDate() + i);
+                      const dateStr = date.toISOString().split('T')[0];
+                      
+                      const dayOrders = filteredData.allOrders.filter((o: any) => o.created_at.startsWith(dateStr));
+                      const dayRevenue = dayOrders.reduce((sum: number, o: any) => sum + parseFloat(o.total_price || '0'), 0);
+                      
+                      let dayCOGS = 0;
+                      dayOrders.forEach((order: any) => {
+                        order.line_items.forEach((item: any) => {
+                          const product = filteredData.allProducts.find(p => 
+                            p.variants.some((v: any) => v.sku === item.sku || p.title === item.title)
+                          );
+                          const category = product?.product_type || 'Uncategorized';
+                          const cogsRates: Record<string, number> = {
+                            'Electronics': 0.65, 'Accessories': 0.55, 'Camera': 0.70,
+                            'Lens': 0.75, 'Tripod': 0.60, 'Lighting': 0.65,
+                            'Audio': 0.60, 'Storage': 0.50, 'Uncategorized': 0.60
+                          };
+                          const cogsRate = cogsRates[category] || 0.60;
+                          dayCOGS += parseFloat(item.price || '0') * (item.quantity || 0) * cogsRate;
+                        });
+                      });
+                      
+                      const dayGrossProfit = dayRevenue - dayCOGS;
+                      const dayOperatingExpenses = dayRevenue * 0.20;
+                      const dayNetProfit = dayGrossProfit - dayOperatingExpenses;
+                      
+                      trendData.push({
+                        date: dateStr,
+                        revenue: dayRevenue,
+                        cogs: dayCOGS,
+                        grossProfit: dayGrossProfit,
+                        operatingExpenses: dayOperatingExpenses,
+                        netProfit: dayNetProfit
+                      });
+                    }
+                    
+                    return trendData;
+                  })()}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip formatter={(value: number, name: string) => [`$${value.toFixed(2)}`, name]} />
+                    <Legend />
+                    <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2} name="Revenue" />
+                    <Line type="monotone" dataKey="grossProfit" stroke="#3b82f6" strokeWidth={2} name="Gross Profit" />
+                    <Line type="monotone" dataKey="netProfit" stroke="#8b5cf6" strokeWidth={2} name="Net Profit" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            {/* Top Profitable Products */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Top Profitable Products</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Platform</TableHead>
+                      <TableHead>Units Sold</TableHead>
+                      <TableHead>Revenue</TableHead>
+                      <TableHead>COGS</TableHead>
+                      <TableHead>Gross Profit</TableHead>
+                      <TableHead>Margin %</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(() => {
+                      const getDateRange = () => {
+                        if (profitDateRange === "custom" && profitStartDate && profitEndDate) {
+                          return { start: new Date(profitStartDate), end: new Date(profitEndDate) };
+                        }
+                        const days = parseInt(profitDateRange);
+                        const end = new Date();
+                        const start = new Date();
+                        start.setDate(start.getDate() - days);
+                        return { start, end };
+                      };
+
+                      const { start, end } = getDateRange();
+                      const productStats = new Map();
+                      
+                      filteredData.allOrders
+                        .filter((order: any) => {
+                          const orderDate = new Date(order.created_at);
+                          return orderDate >= start && orderDate <= end;
+                        })
+                        .forEach((order: any) => {
+                          order.line_items.forEach((item: any) => {
+                            const product = filteredData.allProducts.find(p => 
+                              p.variants.some((v: any) => v.sku === item.sku || p.title === item.title)
+                            );
+                            const category = product?.product_type || 'Uncategorized';
+                            const productKey = `${item.title}-${order.store}`;
+                            
+                            if (!productStats.has(productKey)) {
+                              productStats.set(productKey, {
+                                title: item.title,
+                                category,
+                                platform: order.store,
+                                units: 0,
+                                revenue: 0,
+                                cogs: 0
+                              });
+                            }
+                            
+                            const itemRevenue = parseFloat(item.price || '0') * (item.quantity || 0);
+                            const cogsRates: Record<string, number> = {
+                              'Electronics': 0.65, 'Accessories': 0.55, 'Camera': 0.70,
+                              'Lens': 0.75, 'Tripod': 0.60, 'Lighting': 0.65,
+                              'Audio': 0.60, 'Storage': 0.50, 'Uncategorized': 0.60
+                            };
+                            const cogsRate = cogsRates[category] || 0.60;
+                            
+                            const stats = productStats.get(productKey);
+                            stats.units += item.quantity || 0;
+                            stats.revenue += itemRevenue;
+                            stats.cogs += itemRevenue * cogsRate;
+                          });
+                        });
+
+                      return Array.from(productStats.values())
+                        .map(product => ({
+                          ...product,
+                          grossProfit: product.revenue - product.cogs,
+                          marginPercent: product.revenue > 0 ? ((product.revenue - product.cogs) / product.revenue) * 100 : 0
+                        }))
+                        .sort((a, b) => b.grossProfit - a.grossProfit)
+                        .slice(0, 15)
+                        .map((product, index) => (
+                          <TableRow key={index}>
+                            <TableCell className="font-medium">{product.title}</TableCell>
+                            <TableCell>{product.category}</TableCell>
+                            <TableCell>{product.platform}</TableCell>
+                            <TableCell>{product.units}</TableCell>
+                            <TableCell>${product.revenue.toFixed(2)}</TableCell>
+                            <TableCell>${product.cogs.toFixed(2)}</TableCell>
+                            <TableCell className={product.grossProfit >= 0 ? "text-green-600" : "text-red-600"}>
+                              ${product.grossProfit.toFixed(2)}
+                            </TableCell>
+                            <TableCell className={product.marginPercent >= 0 ? "text-green-600" : "text-red-600"}>
+                              {product.marginPercent.toFixed(1)}%
+                            </TableCell>
+                          </TableRow>
+                        ));
+                    })()}
+                  </TableBody>
+                </Table>
               </CardContent>
             </Card>
           </div>
