@@ -1,3 +1,5 @@
+import { EbayBuyer, EbayOrder, EbayProduct, fetchEbayBuyers, fetchEbayOrders, fetchEbayProducts } from "./ebay";
+
 export interface Order {
   id: number;
   order_number: string;
@@ -89,15 +91,18 @@ export const stores = [
   { name: 'RevarCine', domain: 'revarcine.com' },
   { name: 'MeikeUSA', domain: 'meikeusa.com' },
   { name: 'ZeaponUSA', domain: 'zeaponusa.com' },
+  { name: 'eBay', domain: 'ebay' }, // Add eBay
 ] as const;
 
+// Update the aggregate function to include eBay
 export async function getAggregateData() {
   const allOrders: (Order & { store: string })[] = [];
   const allProducts: (Product & { store: string })[] = [];
   const allCustomers: (Customer & { store: string })[] = [];
   const errors: { store: string; message: string }[] = [];
 
-  for (const store of stores.slice(1)) {
+  // Shopify stores
+  for (const store of stores.slice(1, -1)) { // Exclude eBay for now
     const ordersData = await fetchOrders(store.domain);
     const productsData = await fetchProducts(store.domain);
     const customersData = await fetchCustomers(store.domain);
@@ -121,6 +126,95 @@ export async function getAggregateData() {
     }
   }
 
+  // eBay data
+  try {
+    const ebayOrdersData = await fetchEbayOrders();
+    const ebayProductsData = await fetchEbayProducts();
+    const ebayBuyersData = await fetchEbayBuyers();
+
+    if ('error' in ebayOrdersData) {
+      errors.push({ store: 'eBay', message: `Orders error: ${ebayOrdersData.error}` });
+    } else if (ebayOrdersData.orders) {
+      // Convert eBay orders to Shopify-like format
+      const convertedOrders = ebayOrdersData.orders.map((o: EbayOrder) => ({
+        id: parseInt(o.orderId),
+        order_number: o.orderId,
+        total_price: o.totalPrice,
+        created_at: o.creationDate,
+        fulfillment_status: o.orderStatus === 'completed' ? 'fulfilled' : o.orderStatus === 'shipped' ? 'fulfilled' : 'pending',
+        financial_status: o.orderStatus === 'paid' ? 'paid' : 'pending',
+        line_items: o.lineItems.map((item: any) => ({
+          id: parseInt(item.itemId),
+          title: item.title,
+          quantity: item.quantity,
+          price: item.price,
+        })),
+        customer: {
+          first_name: o.buyer.username.split('.')[0] || 'eBay',
+          last_name: o.buyer.username.split('.')[1] || 'Buyer',
+          email: o.buyer.email,
+        },
+        shipping_address: {
+          address1: o.shippingAddress.street1,
+          city: o.shippingAddress.city,
+          country: o.shippingAddress.countryCode,
+          zip: o.shippingAddress.postalCode,
+        },
+        tags: [],
+        store: 'eBay',
+      }));
+      allOrders.push(...convertedOrders);
+    }
+
+    if ('error' in ebayProductsData) {
+      errors.push({ store: 'eBay', message: `Products error: ${ebayProductsData.error}` });
+    } else if (ebayProductsData.products) {
+      // Convert eBay products to Shopify-like format
+      const convertedProducts = ebayProductsData.products.map((p: EbayProduct) => ({
+        id: parseInt(p.itemId),
+        title: p.title,
+        body_html: p.description,
+        product_type: p.categoryId,
+        vendor: p.sellerInfo.sellerUserName,
+        tags: [],
+        variants: [{
+          id: parseInt(p.itemId),
+          inventory_quantity: p.listingDetails.quantityAvailable,
+          price: p.listingDetails.currentPrice,
+          sku: p.itemId,
+        }],
+        store: 'eBay',
+      }));
+      allProducts.push(...convertedProducts);
+    }
+
+    if ('error' in ebayBuyersData) {
+      errors.push({ store: 'eBay', message: `Buyers error: ${ebayBuyersData.error}` });
+    } else if (ebayBuyersData.buyers) {
+      // Convert eBay buyers to Shopify-like format
+      const convertedBuyers = ebayBuyersData.buyers.map((b: EbayBuyer) => ({
+        id: parseInt(b.username.replace(/\D/g, '')),
+        first_name: b.username.split('.')[0] || 'eBay',
+        last_name: b.username.split('.')[1] || 'Buyer',
+        email: b.email,
+        orders_count: 0, // Would need separate API call to get order count
+        total_spent: '0.00',
+        tags: [],
+        addresses: [{
+          address1: b.address.street1,
+          city: b.address.city,
+          country: b.address.countryCode,
+          zip: b.address.postalCode,
+        }],
+        store: 'eBay',
+      }));
+      allCustomers.push(...convertedBuyers);
+    }
+  } catch (error) {
+    errors.push({ store: 'eBay', message: `Connection error: ${(error as Error).message}` });
+  }
+
+  // Rest of your existing aggregation logic remains the same
   const totalRevenue = allOrders.reduce((sum, o) => sum + parseFloat(o.total_price), 0).toFixed(2);
   const activeOrders = allOrders.filter(o => o.fulfillment_status !== 'fulfilled').length;
   const totalCustomers = allCustomers.length;
