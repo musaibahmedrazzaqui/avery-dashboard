@@ -30,16 +30,21 @@ import {
   Bar,
 } from "recharts";
 import DashboardLayout from "@/components/DashboardLayout";
+import FilterBar from "@/components/FilterBar";
+import LoadingState from "@/components/LoadingState";
+import { useSearchParams } from "next/navigation";
 
 const COLORS = ["#3b82f6", "#10b981", "#f43f5e", "#8b5cf6"];
 
 export default function AnalyticsPage() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [storeFilter, setStoreFilter] = useState("All");
   const [stores, setStores] = useState<Array<{ name: string; domain: string }>>([
     { name: 'All', domain: 'all' },
   ]);
+
+  const store = searchParams.get("store") || "All";
 
   useEffect(() => {
     async function loadStores() {
@@ -62,11 +67,8 @@ export default function AnalyticsPage() {
       try {
         const params = new URLSearchParams();
         
-        if (storeFilter !== "All") {
-          const store = stores.find(s => s.name === storeFilter);
-          if (store) {
-            params.append('store_name', store.name);
-          }
+        if (store && store !== "All") {
+          params.append('store', store);
         }
 
         const res = await fetch(`/api/dashboard/stats?${params}`);
@@ -81,14 +83,10 @@ export default function AnalyticsPage() {
       }
     }
     loadAnalytics();
-  }, [storeFilter, stores]);
+  }, [store]);
 
   if (loading || !data) {
-    return (
-      <DashboardLayout>
-        <div className="text-center py-8">Loading...</div>
-      </DashboardLayout>
-    );
+    return <LoadingState />;
   }
 
   // Format top products for display
@@ -111,20 +109,11 @@ export default function AnalyticsPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row gap-4 mb-4">
-          <Select value={storeFilter} onValueChange={setStoreFilter}>
-            <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="Store" />
-            </SelectTrigger>
-            <SelectContent>
-              {stores.map((store) => (
-                <SelectItem key={store.domain} value={store.name}>
-                  {store.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <FilterBar
+          stores={stores}
+          showSearch={false}
+          showStoreFilter={true}
+        />
 
         <Card>
           <CardHeader>

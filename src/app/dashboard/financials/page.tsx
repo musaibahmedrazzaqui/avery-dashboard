@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -12,13 +13,6 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   BarChart,
   Bar,
   XAxis,
@@ -29,18 +23,52 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import DashboardLayout from "@/components/DashboardLayout";
+import FilterBar from "@/components/FilterBar";
+import LoadingState from "@/components/LoadingState";
+
+interface FinancialData {
+  outstandingInvoices: Array<{
+    customer: string;
+    email: string;
+    platform: string;
+    outstandingAmount: number;
+    invoiceCount: number;
+    lastOrderDate: string;
+    status: string;
+  }>;
+  margins: {
+    totalRevenue: number;
+    estimatedCOGS: number;
+    grossMarginDollars: number;
+    grossMarginPercent: number;
+  };
+  dailyMargins: Array<{
+    date: string;
+    revenue: number;
+    margin: number;
+    marginPercent: number;
+  }>;
+  inventory: {
+    totalInventoryValue: number;
+    platformValues: Array<{
+      platform: string;
+      value: number;
+      items: number;
+    }>;
+  };
+}
 
 export default function FinancialsPage() {
-  const [orders, setOrders] = useState<any[]>([]);
-  const [products, setProducts] = useState<any[]>([]);
+  const searchParams = useSearchParams();
+  const [financialData, setFinancialData] = useState<FinancialData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [storeFilter, setStoreFilter] = useState("All");
   const [stores, setStores] = useState<Array<{ name: string; domain: string }>>([
     { name: 'All', domain: 'all' },
   ]);
-  const [currentOrdersPage, setCurrentOrdersPage] = useState(1);
-  const [ordersPagination, setOrdersPagination] = useState<any>(null);
-  const itemsPerPage = 50; // Load more orders for financial analysis
+
+  const store = searchParams.get("store") || "All";
+  const dateFrom = searchParams.get("date_from") || "";
+  const dateTo = searchParams.get("date_to") || "";
 
   useEffect(() => {
     async function loadStores() {
@@ -58,42 +86,24 @@ export default function FinancialsPage() {
   }, []);
 
   useEffect(() => {
-    async function loadData() {
+    async function loadFinancialData() {
       setLoading(true);
       try {
-        // Load orders
-        const ordersParams = new URLSearchParams({
-          limit: itemsPerPage.toString(),
-          offset: ((currentOrdersPage - 1) * itemsPerPage).toString(),
-        });
-        if (storeFilter !== "All") {
-          const store = stores.find(s => s.name === storeFilter);
-          if (store) {
-            ordersParams.append('store_name', store.name);
-          }
+        const params = new URLSearchParams();
+        if (store && store !== "All") {
+          params.append('store', store);
+        }
+        if (dateFrom) {
+          params.append('date_from', dateFrom);
+        }
+        if (dateTo) {
+          params.append('date_to', dateTo);
         }
 
-        const ordersRes = await fetch(`/api/dashboard/orders?${ordersParams}`);
-        if (ordersRes.ok) {
-          const ordersData = await ordersRes.json();
-          setOrders(ordersData.orders || []);
-          setOrdersPagination(ordersData.pagination);
-        }
-
-        // Load products for inventory calculation
-        const productsParams = new URLSearchParams({
-          limit: '1000', // Load all products for inventory value
-        });
-        if (storeFilter !== "All") {
-          const store = stores.find(s => s.name === storeFilter);
-          if (store) {
-            productsParams.append('store_name', store.name);
-          }
-        }
-        const productsRes = await fetch(`/api/dashboard/products?${productsParams}`);
-        if (productsRes.ok) {
-          const productsData = await productsRes.json();
-          setProducts(productsData.products || []);
+        const res = await fetch(`/api/dashboard/financials?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          setFinancialData(data);
         }
       } catch (error) {
         console.error('Error loading financial data:', error);
@@ -101,122 +111,40 @@ export default function FinancialsPage() {
         setLoading(false);
       }
     }
-    loadData();
-  }, [currentOrdersPage, storeFilter, stores]);
+    loadFinancialData();
+  }, [store, dateFrom, dateTo]);
 
-  // Calculate outstanding invoices
-  const outstandingInvoices = orders
-    .filter((order: any) => 
-      order.financial_status === 'pending' || 
-      order.financial_status === 'partially_paid' ||
-      order.financial_status === null
-    )
-    .reduce((acc: any, order: any) => {
-      const customerKey = order.customer 
-        ? `${order.customer.email || order.customer.first_name}-${order.store}` 
-        : `guest-${order.id}`;
-      if (!acc[customerKey]) {
-        acc[customerKey] = {
-          customer: order.customer 
-            ? `${order.customer.first_name || ''} ${order.customer.last_name || ''}`.trim() || order.customer.email || 'Guest'
-            : 'Guest',
-          email: order.customer?.email || 'N/A',
-          platform: order.store || order.store_type,
-          outstandingAmount: 0,
-          invoiceCount: 0,
-          lastOrderDate: order.created_at,
-          status: order.financial_status || 'pending',
-        };
-      }
-      acc[customerKey].outstandingAmount += parseFloat(order.total_price || '0');
-      acc[customerKey].invoiceCount += 1;
-      if (new Date(order.created_at) > new Date(acc[customerKey].lastOrderDate)) {
-        acc[customerKey].lastOrderDate = order.created_at;
-      }
-      return acc;
-    }, {});
-
-  const outstandingInvoicesList = Object.values(outstandingInvoices)
-    .sort((a: any, b: any) => b.outstandingAmount - a.outstandingAmount)
-    .slice(0, 10);
-
-  // Calculate margins (30 days)
-  const recentOrders = orders.filter((order: any) => {
-    const orderDate = new Date(order.created_at);
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    return orderDate >= thirtyDaysAgo;
-  });
-
-  const totalRevenue = recentOrders.reduce((sum: number, order: any) => 
-    sum + parseFloat(order.total_price || '0'), 0);
-  const estimatedCOGS = totalRevenue * 0.6;
-  const grossMarginDollars = totalRevenue - estimatedCOGS;
-  const grossMarginPercent = totalRevenue > 0 ? (grossMarginDollars / totalRevenue) * 100 : 0;
-
-  // Daily margins for last 7 days
-  const dailyMargins = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().split('T')[0];
-    const dayOrders = orders.filter((o: any) => o.created_at?.startsWith(dateStr));
-    const dayRevenue = dayOrders.reduce((sum: number, o: any) => sum + parseFloat(o.total_price || '0'), 0);
-    const dayCOGS = dayRevenue * 0.6;
-    const dayMargin = dayRevenue - dayCOGS;
-    dailyMargins.push({
-      date: dateStr,
-      revenue: dayRevenue,
-      margin: dayMargin,
-      marginPercent: dayRevenue > 0 ? (dayMargin / dayRevenue) * 100 : 0,
-    });
+  if (loading && !financialData) {
+    return <LoadingState />;
   }
 
-  // Inventory value
-  const totalInventoryValue = products.reduce((sum: number, product: any) => {
-    return sum + (product.variants || []).reduce((variantSum: number, variant: any) => {
-      return variantSum + (variant.inventory_quantity || 0) * parseFloat(variant.price || '0');
-    }, 0);
-  }, 0);
-
-  const platformValues = products.reduce((acc: any, product: any) => {
-    const platform = product.store || product.store_type || 'Unknown';
-    if (!acc[platform]) {
-      acc[platform] = { value: 0, items: 0 };
-    }
-    const productValue = (product.variants || []).reduce((sum: number, variant: any) => 
-      sum + (variant.inventory_quantity || 0) * parseFloat(variant.price || '0'), 0);
-    acc[platform].value += productValue;
-    acc[platform].items += (product.variants || []).reduce((sum: number, v: any) => 
-      sum + (v.inventory_quantity || 0), 0);
-    return acc;
-  }, {});
-
-  if (loading && orders.length === 0) {
-    return (
-      <DashboardLayout>
-        <div className="text-center py-8">Loading...</div>
-      </DashboardLayout>
-    );
+  if (!financialData) {
+    return <LoadingState />;
   }
+
+  const { outstandingInvoices, margins, dailyMargins, inventory } = financialData;
+
+  // Format date for chart (show short format)
+  const formatChartDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  // Format chart data with formatted dates
+  const chartData = dailyMargins.map(item => ({
+    ...item,
+    date: formatChartDate(item.date),
+  }));
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row gap-4 mb-4">
-          <Select value={storeFilter} onValueChange={setStoreFilter}>
-            <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="Store" />
-            </SelectTrigger>
-            <SelectContent>
-              {stores.map((store) => (
-                <SelectItem key={store.domain} value={store.name}>
-                  {store.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <FilterBar
+          stores={stores}
+          showSearch={false}
+          showStoreFilter={true}
+          showDateRange={true}
+        />
 
         <Card>
           <CardHeader>
@@ -235,8 +163,8 @@ export default function FinancialsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {outstandingInvoicesList.length > 0 ? (
-                  outstandingInvoicesList.map((invoice: any, index: number) => (
+                {outstandingInvoices.length > 0 ? (
+                  outstandingInvoices.map((invoice, index) => (
                     <TableRow key={index}>
                       <TableCell className="font-medium">
                         {invoice.customer}
@@ -247,7 +175,9 @@ export default function FinancialsPage() {
                         ${invoice.outstandingAmount.toFixed(2)}
                       </TableCell>
                       <TableCell>{invoice.invoiceCount}</TableCell>
-                      <TableCell>{new Date(invoice.lastOrderDate).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        {new Date(invoice.lastOrderDate).toLocaleDateString()}
+                      </TableCell>
                       <TableCell>
                         <Badge variant={invoice.status === 'pending' ? 'destructive' : 'secondary'}>
                           {invoice.status}
@@ -275,20 +205,26 @@ export default function FinancialsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div className="text-center">
                 <p className="text-sm text-gray-600">Total Revenue</p>
-                <p className="text-2xl font-bold text-green-600">${totalRevenue.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-green-600">
+                  ${margins.totalRevenue.toFixed(2)}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-sm text-gray-600">Gross Margin Dollars</p>
-                <p className="text-2xl font-bold text-blue-600">${grossMarginDollars.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-blue-600">
+                  ${margins.grossMarginDollars.toFixed(2)}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-sm text-gray-600">Gross Margin %</p>
-                <p className="text-2xl font-bold text-purple-600">{grossMarginPercent.toFixed(1)}%</p>
+                <p className="text-2xl font-bold text-purple-600">
+                  {margins.grossMarginPercent.toFixed(1)}%
+                </p>
               </div>
             </div>
 
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={dailyMargins}>
+              <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis />
@@ -311,7 +247,7 @@ export default function FinancialsPage() {
                 <div className="text-center mb-4">
                   <p className="text-sm text-gray-600">Total Inventory Value</p>
                   <p className="text-3xl font-bold text-blue-600">
-                    ${totalInventoryValue.toFixed(2)}
+                    ${inventory.totalInventoryValue.toFixed(2)}
                   </p>
                 </div>
               </div>
@@ -325,13 +261,23 @@ export default function FinancialsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {Object.entries(platformValues).map(([platform, data]: [string, any]) => (
-                      <TableRow key={platform}>
-                        <TableCell className="font-medium">{platform}</TableCell>
-                        <TableCell>${data.value.toFixed(2)}</TableCell>
-                        <TableCell>{data.items}</TableCell>
+                    {inventory.platformValues.length > 0 ? (
+                      inventory.platformValues.map((platformData) => (
+                        <TableRow key={platformData.platform}>
+                          <TableCell className="font-medium">
+                            {platformData.platform}
+                          </TableCell>
+                          <TableCell>${platformData.value.toFixed(2)}</TableCell>
+                          <TableCell>{platformData.items}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center py-4 text-gray-500">
+                          No inventory data
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
               </div>
