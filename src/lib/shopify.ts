@@ -86,16 +86,134 @@ export async function getCustomerDetails(store: string, customerId: number): Pro
   return fetchFromShopify(store, `customers/${customerId}.json`);
 }
 
-export const stores = [
-  { name: 'All', domain: 'all' },
-  { name: 'RevarCine', domain: 'revarcine.com' },
-  { name: 'MeikeUSA', domain: 'meikeusa.com' },
-  { name: 'ZeaponUSA', domain: 'zeaponusa.com' },
-  { name: 'eBay', domain: 'ebay' }, // Add eBay
-] as const;
+/**
+ * Get stores dynamically from environment variables (server-side only)
+ * For client-side, use /api/stores endpoint
+ */
+export function getStores() {
+  // Client-side: return default
+  if (typeof window !== 'undefined') {
+    return [{ name: 'All', domain: 'all' }];
+  }
+
+  const stores: Array<{ name: string; domain: string }> = [
+    { name: 'All', domain: 'all' },
+  ];
+
+  // Get Shopify stores from env (server-side only)
+  if (typeof process !== 'undefined' && process.env) {
+    const envKeys = Object.keys(process.env);
+    const storeNames = new Set<string>();
+
+    for (const key of envKeys) {
+      if (key.endsWith('_STORE')) {
+        const storeName = key.replace('_STORE', '').toLowerCase();
+        storeNames.add(storeName);
+      }
+    }
+
+    for (const storeName of storeNames) {
+      const storeKey = `${storeName.toUpperCase()}_STORE`;
+      const domain = process.env[storeKey];
+      if (domain) {
+        const displayName = storeName
+          .split('_')
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join('');
+        stores.push({ name: displayName, domain });
+      }
+    }
+
+    // Add eBay if configured
+    if (process.env.OAUTH_TOKEN || process.env.EBAY_USER_TOKEN) {
+      stores.push({ name: 'eBay', domain: 'ebay' });
+    }
+  }
+
+  return stores;
+}
+
+// For backward compatibility, export stores (will be updated dynamically on client)
+export const stores = typeof window !== 'undefined' 
+  ? [{ name: 'All', domain: 'all' }] 
+  : getStores();
 
 // Update the aggregate function to include eBay
 export async function getAggregateData() {
+  // Try to use database first, fallback to API
+  try {
+    // Fetch stats from database (server-side aggregation)
+    const statsRes = await fetch('/api/dashboard/stats');
+    
+    // Fetch first page of orders (pagination will be handled by Dashboard component)
+    const ordersRes = await fetch('/api/dashboard/orders?limit=100&offset=0');
+    
+    // If database is available and returns data, use it
+    if (ordersRes.ok && statsRes.ok && ordersRes.status !== 503) {
+      const ordersData = await ordersRes.json();
+      const statsData = await statsRes.json();
+      
+      // Use paginated orders (only first page for initial load)
+      const allOrders = ordersData.orders || [];
+      
+      // Calculate derived metrics
+      const totalRevenue = statsData.totalRevenue || '0.00';
+      const activeOrders = statsData.activeOrders || 0;
+      const totalCustomers = statsData.totalCustomers || 0;
+      const revenueData = statsData.revenueData || [];
+      const fulfillmentStatus = statsData.fulfillmentStatus || [];
+      const financialStatus = statsData.financialStatus || [];
+      const topProducts = statsData.topProducts || [];
+      
+      // Calculate top customers from orders
+      const customerMap = new Map<string, { name: string; email: string; total: number; orders: number; store: string }>();
+      allOrders.forEach((o: any) => {
+        if (o.customer?.email) {
+          const key = o.customer.email;
+          const current = customerMap.get(key) || {
+            name: `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() || 'Unknown',
+            email: o.customer.email,
+            total: 0,
+            orders: 0,
+            store: o.store,
+          };
+          current.total += parseFloat(o.total_price) || 0;
+          current.orders += 1;
+          customerMap.set(key, current);
+        }
+      });
+      const topCustomers = Array.from(customerMap.values())
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10);
+      
+      // Products and customers would need separate endpoints, for now return empty
+      const allProducts: (Product & { store: string })[] = [];
+      const allCustomers: (Customer & { store: string })[] = [];
+      const lowStockCount = 0;
+      const inventoryHealth = 0;
+      
+      return {
+        totalRevenue,
+        activeOrders,
+        inventoryHealth,
+        totalCustomers,
+        lowStockCount,
+        allOrders,
+        allProducts,
+        allCustomers,
+        topProducts,
+        topCustomers,
+        revenueData,
+        fulfillmentStatus,
+        financialStatus,
+        errors: [],
+      };
+    }
+  } catch (error) {
+    console.warn('Database fetch failed, falling back to API:', error);
+  }
+
+  // Fallback to original API-based approach
   const allOrders: (Order & { store: string })[] = [];
   const allProducts: (Product & { store: string })[] = [];
   const allCustomers: (Customer & { store: string })[] = [];

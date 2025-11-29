@@ -52,7 +52,6 @@ import {
   getOrderDetails,
   getProductDetails,
   getCustomerDetails,
-  stores,
 } from "@/lib/shopify";
 import { DialogTrigger } from "@radix-ui/react-dialog";
 import {
@@ -219,21 +218,157 @@ export default function Dashboard() {
     error?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [stores, setStores] = useState<Array<{ name: string; domain: string }>>([
+    { name: 'All', domain: 'all' },
+  ]);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersPerPage] = useState(10);
+  const [ordersPagination, setOrdersPagination] = useState<{
+    total: number;
+    hasMore: boolean;
+    totalPages: number;
+    currentPage: number;
+  } | null>(null);
+  const [productsPage, setProductsPage] = useState(1);
+  const [productsPerPage] = useState(10);
+  const [productsPagination, setProductsPagination] = useState<{
+    total: number;
+    hasMore: boolean;
+    totalPages: number;
+    currentPage: number;
+  } | null>(null);
+  const [customersPage, setCustomersPage] = useState(1);
+  const [customersPerPage] = useState(10);
+  const [customersPagination, setCustomersPagination] = useState<{
+    total: number;
+    hasMore: boolean;
+    totalPages: number;
+    currentPage: number;
+  } | null>(null);
+
+  useEffect(() => {
+    async function loadStores() {
+      try {
+        const res = await fetch('/api/stores');
+        if (res.ok) {
+          const data = await res.json();
+          setStores(data.stores || [{ name: 'All', domain: 'all' }]);
+        }
+      } catch (error) {
+        console.error('Error loading stores:', error);
+      }
+    }
+    loadStores();
+  }, []);
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
-      const aggregate = await getAggregateData();
-      setData(aggregate);
-      if (aggregate.errors.length > 0) {
-        aggregate.errors.forEach((error) => {
-          toast.error(`${error.store}: ${error.message}`, { duration: 5000 });
+      try {
+        // Fetch stats (server-side aggregation)
+        const statsRes = await fetch('/api/dashboard/stats');
+        const statsData = statsRes.ok ? await statsRes.json() : null;
+        
+        // Fetch orders with pagination (apply store filter)
+        const offset = (ordersPage - 1) * ordersPerPage;
+        const ordersParams = new URLSearchParams({
+          limit: ordersPerPage.toString(),
+          offset: offset.toString(),
         });
+        if (storeFilter !== 'All') {
+          ordersParams.append('store_name', storeFilter);
+        }
+        const ordersRes = await fetch(`/api/dashboard/orders?${ordersParams}`);
+        const ordersData = ordersRes.ok ? await ordersRes.json() : { orders: [], pagination: null };
+        
+        // Fetch products and customers with pagination (apply store filter)
+        const productsOffset = (productsPage - 1) * productsPerPage;
+        const customersOffset = (customersPage - 1) * customersPerPage;
+        const productsParams = new URLSearchParams({
+          limit: productsPerPage.toString(),
+          offset: productsOffset.toString(),
+        });
+        const customersParams = new URLSearchParams({
+          limit: customersPerPage.toString(),
+          offset: customersOffset.toString(),
+        });
+        if (storeFilter !== 'All') {
+          productsParams.append('store_name', storeFilter);
+          customersParams.append('store_name', storeFilter);
+        }
+        const productsRes = await fetch(`/api/dashboard/products?${productsParams}`);
+        const customersRes = await fetch(`/api/dashboard/customers?${customersParams}`);
+        const productsData = productsRes.ok ? await productsRes.json() : { products: [], pagination: null };
+        const customersData = customersRes.ok ? await customersRes.json() : { customers: [], pagination: null };
+        
+        if (statsData && ordersData) {
+          // Calculate top customers from orders (client-side for now, could be moved to server)
+          const customerMap = new Map<string, { name: string; email: string; total: number; orders: number; store: string }>();
+          ordersData.orders.forEach((o: any) => {
+            if (o.customer?.email) {
+              const key = o.customer.email;
+              const current = customerMap.get(key) || {
+                name: `${o.customer.first_name || ''} ${o.customer.last_name || ''}`.trim() || 'Unknown',
+                email: o.customer.email,
+                total: 0,
+                orders: 0,
+                store: o.store,
+              };
+              current.total += parseFloat(o.total_price) || 0;
+              current.orders += 1;
+              customerMap.set(key, current);
+            }
+          });
+          const topCustomers = Array.from(customerMap.values())
+            .sort((a, b) => b.total - a.total)
+            .slice(0, 10);
+          
+          setData({
+            totalRevenue: statsData.totalRevenue || '0.00',
+            activeOrders: statsData.activeOrders || 0,
+            inventoryHealth: 0, // Would need products data
+            totalCustomers: statsData.totalCustomers || 0,
+            lowStockCount: 0, // Would need products data
+            allOrders: ordersData.orders || [],
+            allProducts: productsData.products || [],
+            allCustomers: customersData.customers || [],
+            topProducts: statsData.topProducts || [],
+            topCustomers,
+            revenueData: statsData.revenueData || [],
+            fulfillmentStatus: statsData.fulfillmentStatus || [],
+            financialStatus: statsData.financialStatus || [],
+            errors: [],
+          });
+          
+          if (ordersData.pagination) {
+            setOrdersPagination(ordersData.pagination);
+          }
+          if (productsData.pagination) {
+            setProductsPagination(productsData.pagination);
+          }
+          if (customersData.pagination) {
+            setCustomersPagination(customersData.pagination);
+          }
+        } else {
+          // Fallback to original method
+          const aggregate = await getAggregateData();
+          setData(aggregate);
+          if (aggregate.errors.length > 0) {
+            aggregate.errors.forEach((error) => {
+              toast.error(`${error.store}: ${error.message}`, { duration: 5000 });
+            });
+          }
+        }
+      } catch (error: any) {
+        console.error('Error loading data:', error);
+        toast.error('Failed to load data');
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
     loadData();
-  }, []);
+  }, [ordersPage, ordersPerPage, productsPage, productsPerPage, customersPage, customersPerPage, storeFilter]);
 
   if (loading || !data)
     return <div className="text-center py-8">Loading...</div>;
@@ -357,6 +492,8 @@ export default function Dashboard() {
       return sortBy.endsWith("desc") ? bVal - aVal : aVal - bVal;
     });
 
+  // Products and customers are already filtered by store server-side
+  // Only apply search filtering client-side
   const filteredProducts = filteredData.allProducts
     .filter(
       (p: any) => {
@@ -453,28 +590,44 @@ export default function Dashboard() {
   ) => {
     let result: DetailsResponse | undefined;
     try {
-      if (store === "eBay") {
-        // eBay details
-        if (type === "order")
-          result = await getEbayOrderDetails(item.orderId || item.id);
-        else if (type === "product")
+      // Try to fetch from database first (for orders, products, customers)
+      if (type === "order") {
+        // Use order_id from the item (which is the full ID like "shopify_123" or "ebay_456")
+        const orderId = item.id || item.order_id || item.orderId;
+        if (orderId) {
+          try {
+            const res = await fetch(`/api/dashboard/orders/${encodeURIComponent(orderId)}`);
+            if (res.ok) {
+              const data = await res.json();
+              result = { order: data.order };
+            } else {
+              throw new Error('Order not found in database');
+            }
+          } catch (dbError) {
+            // Fallback to API if not in database
+            if (store === "eBay") {
+              result = await getEbayOrderDetails(item.orderId || item.id);
+            } else {
+              // Extract numeric ID from shopify_ prefix if present
+              const numericId = typeof item.id === 'string' && item.id.startsWith('shopify_')
+                ? item.id.replace('shopify_', '')
+                : item.id;
+              result = await getOrderDetails(store.toLowerCase() + ".com", parseInt(numericId));
+            }
+          }
+        }
+      } else if (type === "product") {
+        if (store === "eBay") {
           result = await getEbayProductDetails(item.itemId || item.id);
-        else if (type === "customer")
+        } else {
+          result = await getProductDetails(store.toLowerCase() + ".com", item.id);
+        }
+      } else if (type === "customer") {
+        if (store === "eBay") {
           result = await getEbayBuyerDetails(item.username || item.email);
-      } else {
-        // Shopify details
-        if (type === "order")
-          result = await getOrderDetails(store.toLowerCase() + ".com", item.id);
-        else if (type === "product")
-          result = await getProductDetails(
-            store.toLowerCase() + ".com",
-            item.id
-          );
-        else if (type === "customer")
-          result = await getCustomerDetails(
-            store.toLowerCase() + ".com",
-            item.id
-          );
+        } else {
+          result = await getCustomerDetails(store.toLowerCase() + ".com", item.id);
+        }
       }
 
       if (!result) {
@@ -511,10 +664,36 @@ export default function Dashboard() {
     }
   };
 
+  const handleManualSync = async () => {
+    setSyncing(true);
+    try {
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initialSync: true }),
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        toast.success(`Sync completed! ${result.totalOrdersSynced} orders synced.`);
+        // Reload data
+        const aggregate = await getAggregateData();
+        setData(aggregate);
+      } else {
+        toast.error(`Sync failed: ${result.errors?.join(', ') || result.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      toast.error(`Sync error: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-        <Select value={storeFilter} onValueChange={setStoreFilter}>
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          <Select value={storeFilter} onValueChange={setStoreFilter}>
           <SelectTrigger className="w-[180px]">
             <SelectValue placeholder="Select store" />
           </SelectTrigger>
@@ -553,6 +732,18 @@ export default function Dashboard() {
           className="flex-1 max-w-md"
         />
 
+        </div>
+        
+        <Button
+          onClick={handleManualSync}
+          disabled={syncing}
+          className="bg-blue-600 hover:bg-blue-700"
+        >
+          {syncing ? 'Syncing...' : '🔄 Sync All Historical Data'}
+        </Button>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
         {searchType === "location" && (
           <Select value={locationFilter} onValueChange={setLocationFilter}>
             <SelectTrigger className="w-[180px]">
@@ -945,162 +1136,197 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
           </div>
-          <PaginatedTable
-            data={filteredProducts}
-            renderRow={(item: any) => (
-              <TableRow>
-                <TableCell className="font-medium max-w-xs truncate">
-                  {item.title}
-                </TableCell>
-                <TableCell>{item.store}</TableCell>
-                <TableCell
-                  className={
-                    item.variants.reduce(
-                      (sum: number, v: any) =>
-                        sum + (v.inventory_quantity || 0),
-                      0
-                    ) < 10
-                      ? "text-red-600"
-                      : ""
-                  }
-                >
-                  {item.variants.reduce(
-                    (sum: number, v: any) => sum + (v.inventory_quantity || 0),
-                    0
-                  )}
-                </TableCell>
-                <TableCell>${item.variants[0]?.price || "N/A"}</TableCell>
-                <TableCell>{item.product_type}</TableCell>
-                <TableCell>{item.vendor}</TableCell>
-                <TableCell>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleViewDetails("product", item, item.store)
+          <div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Product</TableHead>
+                  <TableHead>Platform</TableHead>
+                  <TableHead>Inventory</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredProducts.length > 0 ? (
+                  filteredProducts.map((item: any, index: number) => (
+                    <TableRow key={item.id ?? index}>
+                      <TableCell className="font-medium max-w-xs truncate">
+                        {item.title}
+                      </TableCell>
+                      <TableCell>{item.store}</TableCell>
+                      <TableCell
+                        className={
+                          item.variants.reduce(
+                            (sum: number, v: any) =>
+                              sum + (v.inventory_quantity || 0),
+                            0
+                          ) < 10
+                            ? "text-red-600"
+                            : ""
                         }
                       >
-                        Details
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
-                      <DialogHeader>
-                        <DialogTitle>
-                          {selectedItem?.details?.title || item.title}
-                        </DialogTitle>
-                      </DialogHeader>
-                      {selectedItem?.error ? (
-                        <Alert variant="destructive">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Error</AlertTitle>
-                          <AlertDescription>
-                            {selectedItem.error}
-                          </AlertDescription>
-                        </Alert>
-                      ) : selectedItem?.type === "product" &&
-                        selectedItem.details ? (
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <Label>Description</Label>
-                              <p className="line-clamp-4">
-                                {selectedItem.details.body_html?.replace(
-                                  /<[^>]*>/g,
-                                  ""
-                                ) || ""}
-                              </p>
-                            </div>
-                            <div>
-                              <Label>Vendor</Label>
-                              <p>{selectedItem.details.vendor}</p>
-                            </div>
-                            <div>
-                              <Label>Type</Label>
-                              <p>{selectedItem.details.product_type}</p>
-                            </div>
-                          </div>
-                          <Separator />
-                          <Accordion type="single" collapsible>
-                            <AccordionItem value="variants">
-                              <AccordionTrigger>
-                                Variants (
-                                {selectedItem.details.variants?.length || 0})
-                              </AccordionTrigger>
-                              <AccordionContent>
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>SKU</TableHead>
-                                      <TableHead>Price</TableHead>
-                                      <TableHead>Inventory</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {selectedItem.details.variants?.map(
-                                      (v: any) => (
-                                        <TableRow key={v.id}>
-                                          <TableCell>{v.sku}</TableCell>
-                                          <TableCell>${v.price}</TableCell>
-                                          <TableCell
-                                            className={
-                                              (v.inventory_quantity || 0) < 10
-                                                ? "text-red-600"
-                                                : ""
-                                            }
-                                          >
-                                            {v.inventory_quantity}
-                                          </TableCell>
-                                        </TableRow>
-                                      )
-                                    ) || []}
-                                  </TableBody>
-                                </Table>
-                              </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem value="tags">
-                              <AccordionTrigger>Tags</AccordionTrigger>
-                              <AccordionContent>
-                                <div className="flex flex-wrap gap-1">
-                                  {(Array.isArray(selectedItem.details.tags)
-                                    ? selectedItem.details.tags
-                                    : typeof selectedItem.details.tags ===
-                                      "string"
-                                    ? selectedItem.details.tags
-                                        .split(",")
-                                        .map((t: string) => t.trim())
-                                        .filter(Boolean)
-                                    : []
-                                  ).map((tag: string, i: number) => (
-                                    <Badge key={i} variant="secondary">
-                                      {tag}
-                                    </Badge>
-                                  ))}
+                        {item.variants.reduce(
+                          (sum: number, v: any) => sum + (v.inventory_quantity || 0),
+                          0
+                        )}
+                      </TableCell>
+                      <TableCell>${item.variants[0]?.price || "N/A"}</TableCell>
+                      <TableCell>{item.product_type}</TableCell>
+                      <TableCell>{item.vendor}</TableCell>
+                      <TableCell>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                handleViewDetails("product", item, item.store)
+                              }
+                            >
+                              Details
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-2xl">
+                            <DialogHeader>
+                              <DialogTitle>
+                                {selectedItem?.details?.title || item.title}
+                              </DialogTitle>
+                            </DialogHeader>
+                            {selectedItem?.error ? (
+                              <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>Error</AlertTitle>
+                                <AlertDescription>
+                                  {selectedItem.error}
+                                </AlertDescription>
+                              </Alert>
+                            ) : selectedItem?.type === "product" &&
+                              selectedItem.details ? (
+                              <div className="space-y-4">
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <Label>Description</Label>
+                                    <p className="line-clamp-4">
+                                      {selectedItem.details.body_html?.replace(
+                                        /<[^>]*>/g,
+                                        ""
+                                      ) || ""}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <Label>Vendor</Label>
+                                    <p>{selectedItem.details.vendor}</p>
+                                  </div>
+                                  <div>
+                                    <Label>Type</Label>
+                                    <p>{selectedItem.details.product_type}</p>
+                                  </div>
                                 </div>
-                              </AccordionContent>
-                            </AccordionItem>
-                          </Accordion>
-                        </div>
-                      ) : (
-                        <p>Loading...</p>
-                      )}
-                    </DialogContent>
-                  </Dialog>
-                </TableCell>
-              </TableRow>
+                                <Separator />
+                                <Accordion type="single" collapsible>
+                                  <AccordionItem value="variants">
+                                    <AccordionTrigger>
+                                      Variants (
+                                      {selectedItem.details.variants?.length || 0})
+                                    </AccordionTrigger>
+                                    <AccordionContent>
+                                      <Table>
+                                        <TableHeader>
+                                          <TableRow>
+                                            <TableHead>SKU</TableHead>
+                                            <TableHead>Price</TableHead>
+                                            <TableHead>Inventory</TableHead>
+                                          </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                          {selectedItem.details.variants?.map(
+                                            (v: any) => (
+                                              <TableRow key={v.id}>
+                                                <TableCell>{v.sku}</TableCell>
+                                                <TableCell>${v.price}</TableCell>
+                                                <TableCell
+                                                  className={
+                                                    (v.inventory_quantity || 0) < 10
+                                                      ? "text-red-600"
+                                                      : ""
+                                                  }
+                                                >
+                                                  {v.inventory_quantity}
+                                                </TableCell>
+                                              </TableRow>
+                                            )
+                                          ) || []}
+                                        </TableBody>
+                                      </Table>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                  <AccordionItem value="tags">
+                                    <AccordionTrigger>Tags</AccordionTrigger>
+                                    <AccordionContent>
+                                      <div className="flex flex-wrap gap-1">
+                                        {(Array.isArray(selectedItem.details.tags)
+                                          ? selectedItem.details.tags
+                                          : typeof selectedItem.details.tags ===
+                                            "string"
+                                          ? selectedItem.details.tags
+                                              .split(",")
+                                              .map((t: string) => t.trim())
+                                              .filter(Boolean)
+                                          : []
+                                        ).map((tag: string, i: number) => (
+                                          <Badge key={i} variant="secondary">
+                                            {tag}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                </Accordion>
+                              </div>
+                            ) : (
+                              <p>Loading...</p>
+                            )}
+                          </DialogContent>
+                        </Dialog>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                      No products found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            {productsPagination && productsPagination.totalPages > 1 && (
+              <div className="flex justify-end gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
+                  disabled={productsPage === 1}
+                >
+                  ← Previous
+                </Button>
+                <span className="text-sm text-gray-600 self-center">
+                  Page {productsPagination.currentPage} of {productsPagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProductsPage((p) => Math.min(productsPagination.totalPages, p + 1))}
+                  disabled={productsPage >= productsPagination.totalPages}
+                >
+                  Next →
+                </Button>
+              </div>
             )}
-            headers={[
-              "Product",
-              "Platform",
-              "Inventory",
-              "Price",
-              "Type",
-              "Vendor",
-              "Actions",
-            ]}
-            emptyMessage="No products found"
-          />
+          </div>
         </TabsContent>
 
         <TabsContent value="customers">
@@ -1117,113 +1343,148 @@ export default function Dashboard() {
               </SelectContent>
             </Select>
           </div>
-          <PaginatedTable
-            data={filteredCustomers}
-            renderRow={(item: any) => (
-              <TableRow>
-                <TableCell className="font-medium">
-                  {item.first_name} {item.last_name}
-                </TableCell>
-                <TableCell className="max-w-xs truncate">
-                  {item.email}
-                </TableCell>
-                <TableCell>{item.store}</TableCell>
-                <TableCell>{item.orders_count}</TableCell>
-                <TableCell>
-                  ${parseFloat(item.total_spent || "0").toFixed(2)}
-                </TableCell>
-                <TableCell>
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          handleViewDetails("customer", item, item.store)
-                        }
-                      >
-                        Details
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-md">
-                      <DialogHeader>
-                        <DialogTitle>
-                          {selectedItem?.details?.first_name}{" "}
-                          {selectedItem?.details?.last_name}
-                        </DialogTitle>
-                      </DialogHeader>
-                      {selectedItem?.error ? (
-                        <Alert variant="destructive">
-                          <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Error</AlertTitle>
-                          <AlertDescription>
-                            {selectedItem.error}
-                          </AlertDescription>
-                        </Alert>
-                      ) : selectedItem?.type === "customer" &&
-                        selectedItem.details ? (
-                        <div className="space-y-4">
-                          <div>
-                            <Label>Email</Label>
-                            <p>{selectedItem.details.email}</p>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <Label>Orders</Label>
-                              <p>{selectedItem.details.orders_count}</p>
-                            </div>
-                            <div>
-                              <Label>Total Spent</Label>
-                              <p className="font-semibold">
-                                ${selectedItem.details.total_spent}
-                              </p>
-                            </div>
-                          </div>
-                          <Separator />
-                          <Accordion type="single" collapsible>
-                            <AccordionItem value="addresses">
-                              <AccordionTrigger>
-                                Addresses (
-                                {selectedItem.details.addresses?.length || 0})
-                              </AccordionTrigger>
-                              <AccordionContent>
-                                <div className="space-y-2">
-                                  {selectedItem.details.addresses?.map(
-                                    (addr: any, i: number) => (
-                                      <div
-                                        key={i}
-                                        className="p-2 bg-gray-50 rounded"
-                                      >
-                                        <p>
-                                          {addr.address1}, {addr.city},{" "}
-                                          {addr.country} {addr.zip}
-                                        </p>
-                                      </div>
-                                    )
-                                  ) || []}
+          <div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Platform</TableHead>
+                  <TableHead>Orders</TableHead>
+                  <TableHead>Spent</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredCustomers.length > 0 ? (
+                  filteredCustomers.map((item: any, index: number) => (
+                    <TableRow key={item.id ?? index}>
+                      <TableCell className="font-medium">
+                        {item.first_name} {item.last_name}
+                      </TableCell>
+                      <TableCell className="max-w-xs truncate">
+                        {item.email}
+                      </TableCell>
+                      <TableCell>{item.store}</TableCell>
+                      <TableCell>{item.orders_count}</TableCell>
+                      <TableCell>
+                        ${parseFloat(item.total_spent || "0").toFixed(2)}
+                      </TableCell>
+                      <TableCell>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                handleViewDetails("customer", item, item.store)
+                              }
+                            >
+                              Details
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-md">
+                            <DialogHeader>
+                              <DialogTitle>
+                                {selectedItem?.details?.first_name}{" "}
+                                {selectedItem?.details?.last_name}
+                              </DialogTitle>
+                            </DialogHeader>
+                            {selectedItem?.error ? (
+                              <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertTitle>Error</AlertTitle>
+                                <AlertDescription>
+                                  {selectedItem.error}
+                                </AlertDescription>
+                              </Alert>
+                            ) : selectedItem?.type === "customer" &&
+                              selectedItem.details ? (
+                              <div className="space-y-4">
+                                <div>
+                                  <Label>Email</Label>
+                                  <p>{selectedItem.details.email}</p>
                                 </div>
-                              </AccordionContent>
-                            </AccordionItem>
-                          </Accordion>
-                        </div>
-                      ) : (
-                        <p>Loading...</p>
-                      )}
-                    </DialogContent>
-                  </Dialog>
-                </TableCell>
-              </TableRow>
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <Label>Orders</Label>
+                                    <p>{selectedItem.details.orders_count}</p>
+                                  </div>
+                                  <div>
+                                    <Label>Total Spent</Label>
+                                    <p className="font-semibold">
+                                      ${selectedItem.details.total_spent}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Separator />
+                                <Accordion type="single" collapsible>
+                                  <AccordionItem value="addresses">
+                                    <AccordionTrigger>
+                                      Addresses (
+                                      {selectedItem.details.addresses?.length || 0})
+                                    </AccordionTrigger>
+                                    <AccordionContent>
+                                      <div className="space-y-2">
+                                        {selectedItem.details.addresses?.map(
+                                          (addr: any, i: number) => (
+                                            <div
+                                              key={i}
+                                              className="p-2 bg-gray-50 rounded"
+                                            >
+                                              <p>
+                                                {addr.address1}, {addr.city},{" "}
+                                                {addr.country} {addr.zip}
+                                              </p>
+                                            </div>
+                                          )
+                                        ) || []}
+                                      </div>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                </Accordion>
+                              </div>
+                            ) : (
+                              <p>Loading...</p>
+                            )}
+                          </DialogContent>
+                        </Dialog>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-gray-500">
+                      No customers found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            {customersPagination && customersPagination.totalPages > 1 && (
+              <div className="flex justify-end gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCustomersPage((p) => Math.max(1, p - 1))}
+                  disabled={customersPage === 1}
+                >
+                  ← Previous
+                </Button>
+                <span className="text-sm text-gray-600 self-center">
+                  Page {customersPagination.currentPage} of {customersPagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCustomersPage((p) => Math.min(customersPagination.totalPages, p + 1))}
+                  disabled={customersPage >= customersPagination.totalPages}
+                >
+                  Next →
+                </Button>
+              </div>
             )}
-            headers={[
-              "Name",
-              "Email",
-              "Platform",
-              "Orders",
-              "Spent",
-              "Actions",
-            ]}
-            emptyMessage="No customers found"
-          />
+          </div>
         </TabsContent>
 
         <TabsContent value="analytics">
